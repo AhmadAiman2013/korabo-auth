@@ -45,7 +45,7 @@ jobs:
         run: |
           pip install cargo-lambda
           cargo lambda build --release
-          cargo lambda deploy aws-lambda
+          cargo lambda deploy korabo-auth
           
 
 

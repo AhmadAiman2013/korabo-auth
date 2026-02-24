@@ -5,7 +5,8 @@ mod jwt;
 mod model;
 mod ssm;
 
-use crate::auth_handler::{health_check, register};
+use crate::auth_handler::{health_check, login, register};
+use crate::jwt::JwtKey;
 use crate::model::AppState;
 use crate::ssm::get_secret_value;
 use aws_config::BehaviorVersion;
@@ -27,18 +28,23 @@ async fn main() -> Result<(), Error> {
     let secret_value = get_secret_value(&ssm_client, secret_name).await?;
 
     // create dynamodb client
-    let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
+    let db = aws_sdk_dynamodb::Client::new(&config);
 
-    let state = AppState {
-        jwt_secret: secret_value,
-        db: dynamodb_client,
-    };
+    let jwt_keys = JwtKey::from_b64_pem(
+        &secret_value,
+        "8659cfb4-prod-key".to_string(),
+        "korabo-auth".to_string(),
+        "korabo-microservices".to_string(),
+    )?;
+
+    let state = AppState { jwt_keys, db };
 
     let app = Router::new().nest(
         "/auth",
         Router::new()
             .route("/health", get(health_check))
             .route("/register", post(register))
+            .route("/login", post(login))
             .with_state(state),
     );
 

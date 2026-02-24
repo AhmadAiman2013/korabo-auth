@@ -26,6 +26,9 @@ pub enum AppError {
     #[error("Internal server error: {0}")]
     InternalServerError(String),
 
+    #[error("Unauthoriazed: {0}")]
+    Unauthorized(String),
+
     #[error("SSM error: {0}")]
     GetParameterError(#[from] SdkError<GetParameterError>),
 
@@ -43,6 +46,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match &self {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::GetParameterError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::JwtError(_) => StatusCode::UNAUTHORIZED,
@@ -72,6 +76,8 @@ impl IntoResponse for AppError {
                 warn!("Password hashing error: {:?}", e);
                 "An unexpected error occurred".to_string()
             }
+
+            _ => self.to_string(),
         };
 
         (status, Json(json!({ "error": message }))).into_response()

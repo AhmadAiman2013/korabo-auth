@@ -221,7 +221,7 @@ pub async fn login(
 
     let cookie = Cookie::build(("refresh_token", cookie_value))
         .http_only(true)
-        .secure(false)
+        .secure(true)
         .same_site(SameSite::Lax)
         .max_age(Duration::days(1))
         .path("/auth/refresh")

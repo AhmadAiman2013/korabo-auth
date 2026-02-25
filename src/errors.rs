@@ -1,3 +1,4 @@
+use aws_sdk_dynamodb::operation::get_item::GetItemError;
 use aws_sdk_dynamodb::operation::put_item::PutItemError;
 use aws_sdk_dynamodb::operation::query::QueryError;
 use aws_sdk_ssm::error::SdkError;
@@ -13,6 +14,9 @@ use thiserror::Error;
 pub enum DynamodbError {
     #[error("Query error: {0}")]
     QueryError(#[from] SdkError<QueryError>),
+
+    #[error("Get Item error: {0}")]
+    GetItemError(#[from] SdkError<GetItemError>),
 
     #[error("Put Item error: {0}")]
     PutItemError(#[from] SdkError<PutItemError>),

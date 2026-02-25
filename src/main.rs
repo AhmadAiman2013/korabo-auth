@@ -5,7 +5,7 @@ mod jwt;
 mod model;
 mod ssm;
 
-use crate::auth_handler::{health_check, login, register};
+use crate::auth_handler::{health_check, login, logout, refresh, register};
 use crate::jwt::JwtKey;
 use crate::model::AppState;
 use crate::ssm::get_secret_value;
@@ -45,6 +45,8 @@ async fn main() -> Result<(), Error> {
             .route("/health", get(health_check))
             .route("/register", post(register))
             .route("/login", post(login))
+            .route("/logout", post(logout))
+            .route("/refresh", post(refresh))
             .with_state(state),
     );
 

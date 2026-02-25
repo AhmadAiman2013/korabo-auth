@@ -12,6 +12,7 @@ use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use time::{Duration, OffsetDateTime};
 
 // GET /auth/health
@@ -44,21 +45,10 @@ pub async fn register(
 ) -> Result<Json<Value>, AppError> {
     let RegisterRequest { email, password } = payload;
 
-    let existing = state
-        .db
-        .query()
-        .table_name("korabo_auth")
-        .index_name("email-index")
-        .key_condition_expression("email = :email")
-        .expression_attribute_values(":email", AttributeValue::S(email.clone()))
-        .send()
-        .await
-        .map_err(DynamodbError::QueryError)?;
-
-    if existing.count > 0 {
+    if find_profile_by_email(&state.db, &email).await?.is_some() {
         return Ok(Json(json!({
             "code": "korabo_auth_101",
-            "status": "already registered"
+            "status": "user already registered"
         })));
     }
 
@@ -120,27 +110,8 @@ pub async fn login(
     let LoginRequest { email, password } = payload;
 
     // 1. look up user by email via GSI
-    let result = state
-        .db
-        .query()
-        .table_name("korabo_auth")
-        .index_name("email-index")
-        .key_condition_expression("email = :email")
-        .expression_attribute_values(":email", AttributeValue::S(email.clone()))
-        .send()
-        .await
-        .map_err(DynamodbError::QueryError)?;
-
-    let items = result.items();
-
-    let profile = items
-        .iter()
-        .find(|item| {
-            item.get("SK")
-                .and_then(|v| v.as_s().ok())
-                .map(|s| s == "PROFILE")
-                .unwrap_or(false)
-        })
+    let profile = find_profile_by_email(&state.db, &email)
+        .await?
         .ok_or_else(|| AppError::Unauthorized("invalid credentials".to_string()))?;
 
     // 2. Extract user_id and hashed_password
@@ -174,8 +145,142 @@ pub async fn login(
     }
 
     // 4. Issue access token (15 min)
-    let access_token = issue_access_token(&state.jwt_keys, &user_id, &email)?;
+    let access_token = issue_access_token(&state.jwt_keys, &user_id)?;
 
+    // 5. Return response
+    let cookie = mint_new_credentials(&state.db, &user_id).await?;
+
+    let jar = CookieJar::new().add(cookie);
+
+    Ok((
+        jar,
+        Json(json!({
+            "code": "korabo_auth_200",
+            "status": "login successful",
+            "access_token": access_token,
+            "expires_in": 900
+        })),
+    ))
+}
+
+// POST /auth/refresh
+pub async fn refresh(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<(CookieJar, Json<Value>), AppError> {
+    // 1. Pull and parse cookie
+    let cookie = jar
+        .get("refresh_token")
+        .ok_or_else(|| AppError::Unauthorized("no refresh token".to_string()))?;
+
+    let parts: Vec<&str> = cookie.value().splitn(3, '.').collect();
+    if parts.len() != 3 {
+        return Err(AppError::Unauthorized("invalid cookie".to_string()));
+    }
+    let (user_id, token_id, raw_token) = (parts[0], parts[1], parts[2]);
+
+    // 2. Fetch the stored record from DynamoDB
+    let result = state
+        .db
+        .get_item()
+        .table_name("korabo_auth")
+        .key("PK", AttributeValue::S(format!("USER#{}", user_id)))
+        .key(
+            "SK",
+            AttributeValue::S(format!("REFRESH_TOKEN#{}", token_id)),
+        )
+        .send()
+        .await
+        .map_err(DynamodbError::GetItemError)?;
+
+    let record = result
+        .item()
+        .ok_or_else(|| AppError::Unauthorized("no refresh token found".to_string()))?;
+
+    // 3. Constant-time hash comparison
+    let stored_hash = record
+        .get("token_hash")
+        .and_then(|v| v.as_s().ok())
+        .ok_or_else(|| AppError::InternalServerError("missing token hash".to_string()))?;
+
+    let incoming_hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
+
+    if stored_hash != &incoming_hash {
+        return Err(AppError::Unauthorized("invalid refresh token".to_string()));
+    }
+
+    // 4. Issue access token (15 min)
+    let access_token = issue_access_token(&state.jwt_keys, &user_id)?;
+
+    // 5. Return response
+    let cookie = mint_new_credentials(&state.db, &user_id).await?;
+
+    let jar = CookieJar::new().add(cookie);
+
+    Ok((
+        jar,
+        Json(json!({
+            "code": "korabo_auth_201",
+            "status": "refresh successful",
+            "access_token": access_token,
+            "expires_in": 900
+        })),
+    ))
+}
+
+// POST /auth/logout
+pub async fn logout(jar: CookieJar) -> Result<(CookieJar, Json<Value>), AppError> {
+    let expired_cookie = Cookie::build(("refresh_token", ""))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .max_age(Duration::ZERO)
+        .path("/")
+        .build();
+
+    let jar = jar.remove(expired_cookie);
+
+    Ok((
+        jar,
+        Json(json!({
+            "code": "korabo_auth_300",
+            "status": "logged out"
+        })),
+    ))
+}
+
+async fn find_profile_by_email(
+    db: &aws_sdk_dynamodb::Client,
+    email: &str,
+) -> Result<Option<HashMap<String, AttributeValue>>, AppError> {
+    let result = db
+        .query()
+        .table_name("korabo_auth")
+        .index_name("email-index")
+        .key_condition_expression("email = :email")
+        .expression_attribute_values(":email", AttributeValue::S(email.to_string()))
+        .send()
+        .await
+        .map_err(DynamodbError::QueryError)?;
+
+    let profile = result
+        .items()
+        .iter()
+        .find(|item| {
+            item.get("SK")
+                .and_then(|v| v.as_s().ok())
+                .map(|s| s == "PROFILE")
+                .unwrap_or(false)
+        })
+        .cloned();
+
+    Ok(profile)
+}
+
+async fn mint_new_credentials(
+    db: &aws_sdk_dynamodb::Client,
+    user_id: &str,
+) -> Result<Cookie<'static>, AppError> {
     // 5. Build refresh token
     //    token_id  → SK suffix for fast DB lookup
     //    raw_token → random bytes, sent plain in cookie, never stored
@@ -189,9 +294,7 @@ pub async fn login(
     let token_hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
     let refresh_expired_at = OffsetDateTime::now_utc() + Duration::days(1);
 
-    // 6. Store only the hash
-    state
-        .db
+    _ = db
         .put_item()
         .table_name("korabo_auth")
         .item("PK", AttributeValue::S(format!("USER#{}", user_id)))
@@ -224,18 +327,8 @@ pub async fn login(
         .secure(true)
         .same_site(SameSite::Lax)
         .max_age(Duration::days(1))
-        .path("/auth/refresh")
+        .path("/")
         .build();
 
-    let jar = CookieJar::new().add(cookie);
-
-    Ok((
-        jar,
-        Json(json!({
-            "code": "korabo_auth_200",
-            "status": "login successful",
-            "access_token": access_token,
-            "expires_in": 900
-        })),
-    ))
+    Ok(cookie)
 }

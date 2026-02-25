@@ -1,20 +1,9 @@
 use crate::errors::AppError;
 use base64::{engine::general_purpose, Engine as _};
+use claims::Claims;
 use jsonwebtoken::{encode, Header};
 use jsonwebtoken::{Algorithm, EncodingKey};
-use serde::Serialize;
 use time::{Duration, OffsetDateTime};
-
-#[derive(Debug, Serialize)]
-pub struct Claims {
-    pub sub: String,
-    pub email: String,
-    pub iat: i64,
-    pub exp: i64,
-    pub jti: String,
-    pub iss: String,
-    pub aud: String,
-}
 
 #[derive(Debug, Clone)]
 pub struct JwtKey {
@@ -44,12 +33,11 @@ impl JwtKey {
     }
 }
 
-pub fn issue_access_token(key: &JwtKey, user_id: &str, email: &str) -> Result<String, AppError> {
+pub fn issue_access_token(key: &JwtKey, user_id: &str) -> Result<String, AppError> {
     let now = OffsetDateTime::now_utc();
 
     let claims = Claims {
         sub: user_id.to_string(),
-        email: email.to_string(),
         iat: now.unix_timestamp(),
         exp: (now + Duration::minutes(15)).unix_timestamp(),
         jti: uuid::Uuid::new_v4().to_string(),

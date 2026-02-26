@@ -44,6 +44,7 @@ pub fn issue_access_token(key: &JwtKey, user_id: &str) -> Result<String, AppErro
         jti: uuid::Uuid::new_v4().to_string(),
         iss: key.issuer.clone(),
         aud: key.audience.clone(),
+        scope: "user".to_string(),
     };
 
     let mut header = Header::new(Algorithm::RS256);

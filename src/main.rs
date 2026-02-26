@@ -13,7 +13,7 @@ use aws_config::BehaviorVersion;
 use axum::routing::{get, post};
 use axum::Router;
 use lambda_http::{run, tracing, Error};
-use std::env::set_var;
+use std::env::{set_var, var};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -30,11 +30,14 @@ async fn main() -> Result<(), Error> {
     // create dynamodb client
     let db = aws_sdk_dynamodb::Client::new(&config);
 
+    let issuer = var("JWT_ISSUER").expect("JWT_ISSUER must be set");
+    let audience = var("JWT_AUDIENCE").expect("JWT_AUDIENCE must be set");
+
     let jwt_keys = JwtKey::from_b64_pem(
         &secret_value,
         "8659cfb4-prod-key".to_string(),
-        "korabo-auth".to_string(),          // issuer
-        "korabo-microservices".to_string(), // audience
+        issuer,   // issuer
+        audience, // audience
     )?;
 
     let state = AppState { jwt_keys, db };

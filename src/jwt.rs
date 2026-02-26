@@ -11,7 +11,6 @@ pub struct JwtKey {
     pub kid: String,
     pub issuer: String,
     pub audience: String,
-    pub scope: String,
 }
 
 impl JwtKey {
@@ -20,7 +19,6 @@ impl JwtKey {
         kid: String,
         issuer: String,
         audience: String,
-        scope: String,
     ) -> Result<Self, AppError> {
         let pem = general_purpose::STANDARD
             .decode(b64)
@@ -31,7 +29,6 @@ impl JwtKey {
             kid,
             issuer,
             audience,
-            scope,
         })
     }
 }
@@ -42,12 +39,10 @@ pub fn issue_access_token(key: &JwtKey, user_id: &str) -> Result<String, AppErro
     let claims = Claims {
         sub: user_id.to_string(),
         iat: now.unix_timestamp(),
-        nbf: now.unix_timestamp(),
         exp: (now + Duration::minutes(15)).unix_timestamp(),
         jti: uuid::Uuid::new_v4().to_string(),
         iss: key.issuer.clone(),
         aud: key.audience.clone(),
-        scope: key.scope.clone(),
     };
 
     let mut header = Header::new(Algorithm::RS256);

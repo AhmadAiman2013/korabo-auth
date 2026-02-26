@@ -33,9 +33,8 @@ async fn main() -> Result<(), Error> {
     let jwt_keys = JwtKey::from_b64_pem(
         &secret_value,
         "8659cfb4-prod-key".to_string(),
-        "https://d3h6bl8rffsevw.cloudfront.net".to_string(),
-        "korabo-microservices".to_string(),
-        "user:crud".to_string(),
+        "korabo-auth".to_string(),          // issuer
+        "korabo-microservices".to_string(), // audience
     )?;
 
     let state = AppState { jwt_keys, db };

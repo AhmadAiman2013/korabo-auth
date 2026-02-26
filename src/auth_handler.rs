@@ -197,7 +197,7 @@ pub async fn refresh(
         .item()
         .ok_or_else(|| AppError::Unauthorized("no refresh token found".to_string()))?;
 
-    // 3. Constant-time hash comparison
+    // 3. hash comparison
     let stored_hash = record
         .get("token_hash")
         .and_then(|v| v.as_s().ok())

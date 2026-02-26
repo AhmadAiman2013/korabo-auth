@@ -39,6 +39,7 @@ pub fn issue_access_token(key: &JwtKey, user_id: &str) -> Result<String, AppErro
     let claims = Claims {
         sub: user_id.to_string(),
         iat: now.unix_timestamp(),
+        nbf: now.unix_timestamp(),
         exp: (now + Duration::minutes(15)).unix_timestamp(),
         jti: uuid::Uuid::new_v4().to_string(),
         iss: key.issuer.clone(),

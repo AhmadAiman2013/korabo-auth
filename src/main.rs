@@ -35,6 +35,7 @@ async fn main() -> Result<(), Error> {
         "8659cfb4-prod-key".to_string(),
         "https://d3h6bl8rffsevw.cloudfront.net".to_string(),
         "korabo-microservices".to_string(),
+        "user:crud".to_string(),
     )?;
 
     let state = AppState { jwt_keys, db };

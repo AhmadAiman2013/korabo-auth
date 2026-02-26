@@ -658,8 +658,8 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "claims"
-version = "0.1.0"
-source = "git+https://github.com/AhmadAiman2013/korabo-common.git#f40087cf249afeedf1a5b8c9267d679a9e6cc119"
+version = "0.2.0"
+source = "git+https://github.com/AhmadAiman2013/korabo-common.git?tag=0.2.0#71f30274dc65346040bde9d600f03a3dc742850d"
 dependencies = [
  "serde",
 ]

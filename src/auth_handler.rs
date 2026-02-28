@@ -1,6 +1,7 @@
 use crate::errors::{AppError, DynamodbError};
 use crate::jwt::issue_access_token;
-use crate::model::AppState;
+use crate::model::{AppState, UserRegisteredEvent};
+use crate::sqs::publish_user_registered;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -68,14 +69,27 @@ pub async fn register(
         .db
         .put_item()
         .table_name("korabo_auth")
-        .item("PK", AttributeValue::S(format!("USER#{}", user.user_id)))
+        .item(
+            "PK",
+            AttributeValue::S(format!("USER#{}", user.user_id.clone())),
+        )
         .item("SK", AttributeValue::S("PROFILE".to_string()))
-        .item("email", AttributeValue::S(user.email))
+        .item("email", AttributeValue::S(user.email.clone()))
         .item("hashed_password", AttributeValue::S(user.hashed_password))
         .item("created_at", AttributeValue::S(user.created_at))
         .send()
         .await
         .map_err(DynamodbError::PutItemError)?;
+
+    publish_user_registered(
+        &state.sqs,
+        &state.queue_url,
+        &UserRegisteredEvent {
+            user_id: user.user_id,
+            email: user.email,
+        },
+    )
+    .await?;
 
     Ok(Json(json!({
         "code": "korabo_auth_100",

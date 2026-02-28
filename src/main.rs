@@ -3,12 +3,13 @@ mod db;
 mod errors;
 mod jwt;
 mod model;
+mod sqs;
 mod ssm;
 
 use crate::auth_handler::{health_check, login, logout, refresh, register};
 use crate::jwt::JwtKey;
 use crate::model::AppState;
-use crate::ssm::get_secret_value;
+use crate::ssm::get_parameter;
 use aws_config::BehaviorVersion;
 use axum::routing::{get, post};
 use axum::Router;
@@ -24,8 +25,16 @@ async fn main() -> Result<(), Error> {
 
     // use parameter store to get the secret value
     let ssm_client = aws_sdk_ssm::Client::new(&config);
-    let secret_name = "/korabo/prod";
-    let secret_value = get_secret_value(&ssm_client, secret_name).await?;
+    let (secret_value, queue_url) = tokio::join!(
+        get_parameter(&ssm_client, "/korabo/prod", true),
+        get_parameter(&ssm_client, "/korabo/prod/sqs", false),
+    );
+
+    let secret_value = secret_value?;
+    let queue_url = queue_url?;
+
+    // create sqs client
+    let sqs_client = aws_sdk_sqs::Client::new(&config);
 
     // create dynamodb client
     let db = aws_sdk_dynamodb::Client::new(&config);
@@ -40,7 +49,12 @@ async fn main() -> Result<(), Error> {
         audience, // audience
     )?;
 
-    let state = AppState { jwt_keys, db };
+    let state = AppState {
+        jwt_keys,
+        db,
+        queue_url,
+        sqs: sqs_client,
+    };
 
     let app = Router::new().nest(
         "/auth",

@@ -35,7 +35,7 @@ async fn main() -> Result<(), Error> {
 
     let jwt_keys = JwtKey::from_b64_pem(
         &secret_value,
-        "8659cfb4-prod-key".to_string(),
+        "0c54d5ee-prod-key".to_string(),
         issuer,   // issuer
         audience, // audience
     )?;

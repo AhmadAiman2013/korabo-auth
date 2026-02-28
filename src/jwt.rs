@@ -23,7 +23,7 @@ impl JwtKey {
         let pem = general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-        let encoding_key = EncodingKey::from_rsa_pem(&pem)?;
+        let encoding_key = EncodingKey::from_ed_pem(&pem)?;
         Ok(Self {
             encoding_key,
             kid,
@@ -47,7 +47,7 @@ pub fn issue_access_token(key: &JwtKey, user_id: &str) -> Result<String, AppErro
         scope: "user".to_string(),
     };
 
-    let mut header = Header::new(Algorithm::RS256);
+    let mut header = Header::new(Algorithm::EdDSA);
     header.kid = Some(key.kid.clone());
 
     encode(&header, &claims, &key.encoding_key).map_err(AppError::JwtError)

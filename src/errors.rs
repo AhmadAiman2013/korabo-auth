@@ -8,7 +8,7 @@ use aws_sdk_ssm::operation::get_parameter::GetParameterError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use tracing::warn;
+use lambda_http::tracing::warn;
 
 use serde_json::json;
 use thiserror::Error;

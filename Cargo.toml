@@ -17,10 +17,10 @@ uuid = { version = "1.21.0", features = ["v4"] }
 serde = { version = "1.0.228", features = ["derive"] }
 argon2 = { version = "0.5.3", features = ["std"] }
 base64 = "0.22.1"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 hex = "0.4.3"
 axum-extra = { version = "0.12.5", features = ["cookie"] }
 time = { version = "0.3.47", features = ["formatting"] }
 claims = { git = "https://github.com/AhmadAiman2013/korabo-common.git", tag = "0.8.0" }
 aws-sdk-sqs = "1.95.0"
-tracing = "0.1.44"
+tower-http = { version = "0.6.11", features = ["cors"] }

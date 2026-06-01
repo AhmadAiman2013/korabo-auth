@@ -11,10 +11,13 @@ use crate::jwt::JwtKey;
 use crate::model::AppState;
 use crate::ssm::get_parameter;
 use aws_config::BehaviorVersion;
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use axum::http::{HeaderValue, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use lambda_http::{run, tracing, Error};
 use std::env::{set_var, var};
+use tower_http::cors::CorsLayer;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -49,6 +52,17 @@ async fn main() -> Result<(), Error> {
         audience, // audience
     )?;
 
+    let cors = CorsLayer::new()
+        .allow_origin("http://localhost:4200".parse::<HeaderValue>()?)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
+
     let state = AppState {
         jwt_keys,
         db,
@@ -56,16 +70,18 @@ async fn main() -> Result<(), Error> {
         sqs: sqs_client,
     };
 
-    let app = Router::new().nest(
-        "/auth",
-        Router::new()
-            .route("/health", get(health_check))
-            .route("/register", post(register))
-            .route("/login", post(login))
-            .route("/logout", post(logout))
-            .route("/refresh", post(refresh))
-            .with_state(state),
-    );
+    let app = Router::new()
+        .nest(
+            "/auth",
+            Router::new()
+                .route("/health", get(health_check))
+                .route("/register", post(register))
+                .route("/login", post(login))
+                .route("/logout", post(logout))
+                .route("/refresh", post(refresh))
+                .with_state(state),
+        )
+        .layer(cors);
 
     run(app).await
 }

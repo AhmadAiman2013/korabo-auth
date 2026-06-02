@@ -12,7 +12,7 @@ use crate::model::AppState;
 use crate::ssm::get_parameter;
 use aws_config::BehaviorVersion;
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
-use axum::http::{HeaderValue, Method};
+use axum::http::Method;
 use axum::routing::{get, post};
 use axum::Router;
 use lambda_http::{run, tracing, Error};
@@ -52,8 +52,13 @@ async fn main() -> Result<(), Error> {
         audience, // audience
     )?;
 
+    let origins = [
+        "https://d3h6bl8rffsevw.cloudfront.net".parse()?,
+        "http://localhost:4200".parse()?,
+    ];
+
     let cors = CorsLayer::new()
-        .allow_origin("http://localhost:4200".parse::<HeaderValue>()?)
+        .allow_origin(origins)
         .allow_methods([
             Method::GET,
             Method::POST,

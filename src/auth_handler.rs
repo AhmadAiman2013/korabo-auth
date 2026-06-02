@@ -339,7 +339,7 @@ async fn mint_new_credentials(
     let cookie = Cookie::build(("refresh_token", cookie_value))
         .http_only(true)
         .secure(true)
-        .same_site(SameSite::Lax)
+        .same_site(SameSite::None)
         .max_age(Duration::days(1))
         .path("/auth")
         .build();

@@ -66,7 +66,8 @@ async fn main() -> Result<(), Error> {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION])
+        .allow_credentials(true);
 
     let state = AppState {
         jwt_keys,

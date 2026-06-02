@@ -341,7 +341,7 @@ async fn mint_new_credentials(
         .secure(true)
         .same_site(SameSite::Lax)
         .max_age(Duration::days(1))
-        .path("/")
+        .path("/auth")
         .build();
 
     Ok(cookie)

@@ -247,7 +247,7 @@ pub async fn logout(jar: CookieJar) -> Result<(CookieJar, Json<Value>), AppError
     let expired_cookie = Cookie::build(("refresh_token", ""))
         .http_only(true)
         .secure(true)
-        .same_site(SameSite::Lax)
+        .same_site(SameSite::None)
         .max_age(Duration::ZERO)
         .path("/")
         .build();

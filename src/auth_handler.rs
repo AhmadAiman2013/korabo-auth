@@ -249,7 +249,7 @@ pub async fn logout(jar: CookieJar) -> Result<(CookieJar, Json<Value>), AppError
         .secure(true)
         .same_site(SameSite::None)
         .max_age(Duration::ZERO)
-        .path("/")
+        .path("/auth")
         .build();
 
     let jar = jar.remove(expired_cookie);

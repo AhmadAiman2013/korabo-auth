@@ -54,7 +54,7 @@ async fn main() -> Result<(), Error> {
 
     let origins = [
         "https://d3h6bl8rffsevw.cloudfront.net".parse()?,
-        "http://localhost:4200".parse()?,
+        "http://localhost:5173".parse()?,
     ];
 
     let cors = CorsLayer::new()

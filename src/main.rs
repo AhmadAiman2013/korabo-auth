@@ -53,9 +53,9 @@ async fn main() -> Result<(), Error> {
     )?;
 
     let origins = [
-        "https://d3h6bl8rffsevw.cloudfront.net".parse()?,
         "http://localhost:5173".parse()?,
         "https://koraboweb.online".parse()?,
+        "https://d-2rw4lmweh4.execute-api.ap-southeast-1.amazonaws.com".parse()?,
     ];
 
     let cors = CorsLayer::new()

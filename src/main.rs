@@ -5,8 +5,9 @@ mod jwt;
 mod model;
 mod sqs;
 mod ssm;
+mod totp;
 
-use crate::auth_handler::{health_check, login, logout, refresh, register};
+use crate::auth_handler::{forgot_password, health_check, login, logout, refresh, register, totp_setup, totp_verify_setup};
 use crate::jwt::JwtKey;
 use crate::model::AppState;
 use crate::ssm::get_parameter;
@@ -86,6 +87,9 @@ async fn main() -> Result<(), Error> {
                 .route("/login", post(login))
                 .route("/logout", post(logout))
                 .route("/refresh", post(refresh))
+                .route("/totp/setup", post(totp_setup))
+                .route("/totp/verify-setup", post(totp_verify_setup))
+                .route("/forgot-password", post(forgot_password))
                 .with_state(state),
         )
         .layer(cors);

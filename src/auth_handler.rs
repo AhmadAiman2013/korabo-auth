@@ -2,6 +2,7 @@ use crate::errors::{AppError, DynamodbError};
 use crate::jwt::issue_access_token;
 use crate::model::{AppState, UserRegisteredEvent};
 use crate::sqs::publish_user_registered;
+use crate::totp::verify_totp_code;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -15,6 +16,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use time::{Duration, OffsetDateTime};
+use totp_rs::{Algorithm, Secret, TOTP};
 
 // GET /auth/health
 pub async fn health_check() -> Json<Value> {
@@ -53,6 +55,27 @@ pub async fn register(
         })));
     }
 
+    // totp check
+    let pending_item = get_pending_totp_item(&state.db, &email).await?;
+
+    let verified = pending_item
+        .get("verified")
+        .and_then(|v| v.as_bool().ok())
+        .copied()
+        .unwrap_or(false);
+
+    if !verified {
+        return Err(AppError::InternalServerError(
+            "totp not verified".to_string(),
+        ));
+    }
+
+    let totp_secret = pending_item
+        .get("secret")
+        .and_then(|v| v.as_s().ok())
+        .ok_or_else(|| AppError::InternalServerError("missing secret".to_string()))?
+        .to_string();
+
     // Hash the password
     let hashed_password = hash_password(&password).await?;
 
@@ -77,6 +100,7 @@ pub async fn register(
         .item("email", AttributeValue::S(user.email.clone()))
         .item("hashed_password", AttributeValue::S(user.hashed_password))
         .item("created_at", AttributeValue::S(user.created_at))
+        .item("totp_secret", AttributeValue::S(totp_secret))
         .send()
         .await
         .map_err(DynamodbError::PutItemError)?;
@@ -116,6 +140,15 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+fn build_auth_response(code: &str, status: &str, access_token: &str) -> Json<Value> {
+    Json(json!({
+        "code": code,
+        "status": status,
+        "access_token": access_token,
+        "expires_in": 900
+    }))
+}
+
 // POST /auth/login
 pub async fn login(
     State(state): State<AppState>,
@@ -129,11 +162,7 @@ pub async fn login(
         .ok_or_else(|| AppError::Unauthorized("invalid credentials".to_string()))?;
 
     // 2. Extract user_id and hashed_password
-    let user_id = profile
-        .get("PK")
-        .and_then(|v| v.as_s().ok())
-        .map(|s| s.trim_start_matches("USER#").to_string())
-        .ok_or_else(|| AppError::InternalServerError("missing PK".to_string()))?;
+    let user_id = extract_user_id_from_pk(&profile)?;
 
     let hashed_password = profile
         .get("hashed_password")
@@ -168,12 +197,7 @@ pub async fn login(
 
     Ok((
         jar,
-        Json(json!({
-            "code": "korabo_auth_200",
-            "status": "login successful",
-            "access_token": access_token,
-            "expires_in": 900
-        })),
+        build_auth_response("korabo_auth_200", "login successful", &access_token),
     ))
 }
 
@@ -233,25 +257,13 @@ pub async fn refresh(
 
     Ok((
         jar,
-        Json(json!({
-            "code": "korabo_auth_201",
-            "status": "refresh successful",
-            "access_token": access_token,
-            "expires_in": 900
-        })),
+        build_auth_response("korabo_auth_201", "refresh successful", &access_token),
     ))
 }
 
 // POST /auth/logout
 pub async fn logout(jar: CookieJar) -> Result<(CookieJar, Json<Value>), AppError> {
-    let expired_cookie = Cookie::build(("refresh_token", ""))
-        .http_only(true)
-        .secure(true)
-        .same_site(SameSite::None)
-        .max_age(Duration::ZERO)
-        .path("/auth")
-        .build();
-
+    let expired_cookie = build_refresh_token_cookie("", Duration::ZERO);
     let jar = jar.remove(expired_cookie);
 
     Ok((
@@ -261,6 +273,33 @@ pub async fn logout(jar: CookieJar) -> Result<(CookieJar, Json<Value>), AppError
             "status": "logged out"
         })),
     ))
+}
+
+fn extract_user_id_from_pk(profile: &HashMap<String, AttributeValue>) -> Result<String, AppError> {
+    profile
+        .get("PK")
+        .and_then(|v| v.as_s().ok())
+        .map(|s| s.trim_start_matches("USER#").to_string())
+        .ok_or_else(|| AppError::InternalServerError("missing PK".to_string()))
+}
+
+async fn get_pending_totp_item(
+    db: &aws_sdk_dynamodb::Client,
+    email: &str,
+) -> Result<HashMap<String, AttributeValue>, AppError> {
+    let result = db
+        .get_item()
+        .table_name("korabo_auth")
+        .key("PK", AttributeValue::S(format!("PENDING#{}", email)))
+        .key("SK", AttributeValue::S("TOTP".to_string()))
+        .send()
+        .await
+        .map_err(DynamodbError::GetItemError)?;
+
+    result
+        .item()
+        .cloned()
+        .ok_or_else(|| AppError::NotFound("no pending totp setup".to_string()))
 }
 
 async fn find_profile_by_email(
@@ -336,13 +375,167 @@ async fn mint_new_credentials(
     // 7. Cookie value = <user_id>.<token_id>.<raw_token>
     let cookie_value = format!("{}.{}.{}", user_id, token_id, raw_token);
 
-    let cookie = Cookie::build(("refresh_token", cookie_value))
+    let cookie = build_refresh_token_cookie(&cookie_value, Duration::days(1));
+
+    Ok(cookie)
+}
+
+fn build_refresh_token_cookie(value: &str, max_age: Duration) -> Cookie<'static> {
+    Cookie::build(("refresh_token", value.to_string()))
         .http_only(true)
         .secure(true)
         .same_site(SameSite::None)
-        .max_age(Duration::days(1))
+        .max_age(max_age)
         .path("/auth")
-        .build();
+        .build()
+}
 
-    Ok(cookie)
+// TOTP flow
+
+#[derive(Deserialize)]
+pub struct TotpSetupRequest {
+    pub email: String,
+}
+
+// POST /auth/totp/setup
+pub async fn totp_setup(
+    State(state): State<AppState>,
+    Json(payload): Json<TotpSetupRequest>,
+) -> Result<Json<Value>, AppError> {
+    let TotpSetupRequest { email } = payload;
+
+    if find_profile_by_email(&state.db, &email).await?.is_some() {
+        return Err(AppError::InternalServerError(
+            "email already registered".to_string(),
+        ));
+    }
+
+    let secret = Secret::generate_secret().to_encoded().to_string();
+
+    let totp = TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        Secret::Encoded(secret.clone()).to_bytes().unwrap(),
+        Some("Korabo".to_string()),
+        email.clone(),
+    )
+    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+
+    let expires_at = OffsetDateTime::now_utc() + Duration::minutes(15);
+
+    state
+        .db
+        .put_item()
+        .table_name("korabo_auth")
+        .item("PK", AttributeValue::S(format!("PENDING#{}", email)))
+        .item("SK", AttributeValue::S("TOTP".to_string()))
+        .item("secret", AttributeValue::S(secret))
+        .item("verified", AttributeValue::Bool(false))
+        .item(
+            "expires_at",
+            AttributeValue::N(expires_at.unix_timestamp().to_string()),
+        )
+        .send()
+        .await
+        .map_err(DynamodbError::PutItemError)?;
+
+    Ok(Json(json!({
+        "code": "korabo_auth_400",
+        "otpauth_url": totp.get_url()
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct TotpVerifyRequest {
+    pub email: String,
+    pub code: String,
+}
+
+// POST /auth/totp/verify-setup
+pub async fn totp_verify_setup(
+    State(state): State<AppState>,
+    Json(payload): Json<TotpVerifyRequest>,
+) -> Result<Json<Value>, AppError> {
+    let TotpVerifyRequest { email, code } = payload;
+
+    let item = get_pending_totp_item(&state.db, &email).await?;
+
+    let secret = item
+        .get("secret")
+        .and_then(|v| v.as_s().ok())
+        .ok_or_else(|| AppError::InternalServerError("missing secret".to_string()))?;
+
+    if !verify_totp_code(secret, &code)? {
+        return Err(AppError::Unauthorized("invalid code".to_string()));
+    }
+
+    state
+        .db
+        .update_item()
+        .table_name("korabo_auth")
+        .key("PK", AttributeValue::S(format!("PENDING#{}", email)))
+        .key("SK", AttributeValue::S("TOTP".to_string()))
+        .update_expression("SET verified = :v")
+        .expression_attribute_values(":v", AttributeValue::Bool(true))
+        .send()
+        .await
+        .map_err(DynamodbError::UpdateItemError)?;
+
+    Ok(Json(
+        json!({ "code": "korabo_auth_401", "status": "verified" }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct ForgotPasswordRequest {
+    pub email: String,
+    pub code: String,
+    pub new_password: String,
+}
+
+// POST /auth/forgot-password
+pub async fn forgot_password(
+    State(state): State<AppState>,
+    Json(payload): Json<ForgotPasswordRequest>,
+) -> Result<Json<Value>, AppError> {
+    let ForgotPasswordRequest {
+        email,
+        code,
+        new_password,
+    } = payload;
+
+    let profile = find_profile_by_email(&state.db, &email)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("invalid email".to_string()))?;
+
+    let user_id = extract_user_id_from_pk(&profile)?;
+
+    let secret = profile
+        .get("totp_secret")
+        .and_then(|v| v.as_s().ok())
+        .ok_or_else(|| AppError::Unauthorized("2fa not set up".to_string()))?;
+
+    if !verify_totp_code(secret, &code)? {
+        return Err(AppError::Unauthorized("invalid code".to_string()));
+    }
+
+    let hashed_password = hash_password(&new_password).await?;
+
+    state
+        .db
+        .update_item()
+        .table_name("korabo_auth")
+        .key("PK", AttributeValue::S(format!("USER#{}", user_id)))
+        .key("SK", AttributeValue::S("PROFILE".to_string()))
+        .update_expression("SET hashed_password = :h")
+        .expression_attribute_values(":h", AttributeValue::S(hashed_password))
+        .send()
+        .await
+        .map_err(DynamodbError::UpdateItemError)?;
+
+    Ok(Json(
+        json!({ "code": "korabo_auth_402", "status": "password updated" }),
+    ))
 }
